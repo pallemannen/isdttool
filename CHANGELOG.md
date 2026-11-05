@@ -3,7 +3,7 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
-## 1.1.0 - unreleased
+## 1.1.0 - 2026-11-04
 
 ### Added
 - `serve` exposes a charger on a local USB port to the network. A new client replaces the

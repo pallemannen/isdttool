@@ -18,6 +18,8 @@ import sys
 import threading
 from typing import Optional
 
+import isdttool
+
 from .charger.transport import REPORT_SIZE, UsbTransport
 
 SERIAL_REQUEST_OPCODE = 0xc8
@@ -28,6 +30,12 @@ SERIAL_LENGTH = 12
 def log(*args) -> None:
     """Bridge events go to stderr, so that they end up in the journal when run by systemd."""
     print(*args, file=sys.stderr, flush=True)
+
+
+def debug(*args) -> None:
+    """Routine events, only logged with --debug. A client that polls connects every time."""
+    if isdttool.DEBUG_MODE:
+        log(*args)
 
 
 def is_serial_request(report: bytes) -> bool:
@@ -165,7 +173,7 @@ class Bridge:
         with self.__client_lock__:
             if self.__client__ is client:
                 self.__client__ = None
-                log('Client', address[0], 'disconnected.')
+                debug('Client', address[0], 'disconnected.')
         client.close()
 
     def serve(self, bind: str, port: int) -> None:
@@ -196,6 +204,7 @@ class Bridge:
             else '{}:{}'.format(bind, port))
 
         threading.Thread(target=self.__charger_reader__, daemon=True).start()
+        last_address: Optional[str] = None
 
         try:
             while not self.__stopped__.is_set():
@@ -212,8 +221,12 @@ class Bridge:
                         previous.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+                elif address[0] != last_address:
+                    log('Client', address[0], 'connected. Further connections from it are only '
+                        'logged with --debug.')
                 else:
-                    log('Client', address[0], 'connected.')
+                    debug('Client', address[0], 'connected.')
+                last_address = address[0]
                 threading.Thread(target=self.__client_reader__, args=(client, address),
                                  daemon=True).start()
         finally:

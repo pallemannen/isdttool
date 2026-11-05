@@ -1,5 +1,9 @@
 # isdttool
 
+> This is a fork of [maxried/isdttool](https://github.com/maxried/isdttool), published on PyPI as `isdttool-pal`. It adds a network bridge (`serve`, `--host`), selecting chargers by USB serial number, and ISDT N24 support. Everything is offered upstream as pull requests; once they are merged, use `isdttool` instead. The command, and the import name stay `isdttool`.
+>
+>     pip install isdttool-pal
+
 ## Important Notes
 This software is not sponsored by ISDT, or anyone else. It was created by observing the protocol between the updater, then the charger, and fuzzing the charger, and observing its behavior. Chargers are dangerous tools. You should never use them unattended. Batteries can leak, catch fire, etc. This tool comes with no warranties whatsoever. If bad things happen, I'm not responsible.
 
@@ -19,7 +23,7 @@ It should be compatible with other chargers by ISDT, at least the ones that are 
 
 The only dependency is `hidapi`, which should be automatically installed if you use `pip` to install `isdttool`.
 
-    pip install isdttool
+    pip install isdttool-pal
 
 Not every user is allowed to access human interface devices on every platform. If you're on some Linux, you likely have to add some udev rules if you want to run `isdttool` as an unprivileged user. A quick fix would be to save the following file in `/etc/udev/rules.d/99-isdt.rules`, and run `udev trigger`:
 

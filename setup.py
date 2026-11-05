@@ -9,14 +9,16 @@ with open('README.md', 'r') as fh:
     long_description = fh.read()
 
 setup(
-    name='isdttool',
-    version='1.0.0',
+    name='isdttool-pal',
+    version='1.1.0',
     packages=find_packages(),
-    url='https://github.com/maxried/isdttool',
+    url='https://github.com/pallemannen/isdttool',
     license='GPLv3',
     install_requires='hidapi>=0.10.1',
     author='Max Ried',
     author_email='maxried@posteo.de',
+    maintainer='Patrik Bodin',
+    maintainer_email='the@pal.pp.se',
     description='Tool to retrieve information from ISDT chargers with USB connection.',
     long_description=long_description,
     long_description_content_type="text/markdown",

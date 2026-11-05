@@ -3,6 +3,17 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
+## 2.0.0 - unreleased
+
+### Changed
+- **Breaking:** the bridge's TCP wire format carries packets instead of 64-byte HID reports.
+  Each message is one packet, preceded by its length as two bytes, big-endian. The USB
+  framing stays between the bridge and the charger. Bridge and clients must be updated
+  together.
+- Transports send and receive packets (`send()`, `receive()`) instead of HID reports, so links
+  without the USB framing, like Bluetooth LE, can be added as transports. The USB framing
+  moved into `UsbTransport` (module `framing`).
+
 ## 1.1.2 - 2026-11-04
 
 ### Fixed

@@ -110,7 +110,9 @@ def read_serial_number(charger: Charger, output_mode='text') -> None:
     :param charger: An usb.Device object for the charger as retrieved by isdttool.get_device
     :param output_mode: Either csv, test, json, or dict.
     """
-    if not assure_compatibility(charger, [('C4', 'app'), ('A4', 'app')]):
+    # The N24 doesn't answer itself, but a bridge (isdttool serve) answers for it with the USB
+    # serial number. Over USB, the request times out.
+    if not assure_compatibility(charger, [('C4', 'app'), ('A4', 'app'), ('N24', 'app')]):
         return
 
     charger.get_mcu_serial_number()

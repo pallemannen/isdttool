@@ -12,7 +12,7 @@ https://github.com/maxried/isdttool.
 - `-H/--host HOST[:PORT]` and `-p/--port` use a charger through a bridge.
 - `-s/--serial` picks a local charger by USB serial number.
 - `list` shows USB serial numbers.
-- ISDT N24 support, including the reason why charging stopped.
+- ISDT N24 support, including the reason why charging stopped. `serial` works through a bridge.
 - Transport abstraction in the library: `get_device(host=..., port=...)`. hidapi is only needed
   for USB.
 

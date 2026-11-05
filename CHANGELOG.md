@@ -3,6 +3,14 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
+## 1.1.1 - 2026-11-04
+
+### Changed
+- The bridge logs a client only the first time it connects, and when it replaces another
+  client, instead of every connection. A client that polls, like the Home Assistant
+  integration, filled the journal with about 5,800 lines a day. `--debug` logs every
+  connection.
+
 ## 1.1.0 - 2026-11-04
 
 ### Added

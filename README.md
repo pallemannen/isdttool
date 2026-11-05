@@ -46,7 +46,7 @@ Not every user is allowed to access human interface devices on every platform. I
 
 Each bridge serves one charger on one TCP port. The default port is 24000, so more chargers can use 24001, 24002, and so on. Only one client is served at a time, and a new client replaces the current one.
 
-The wire format is deliberately simple, so that other programs can talk to a bridge without isdttool: in both directions, every message is exactly one 64-byte HID report, as it would be written to, or read from the charger with hidapi. There is no handshake, and no other message type.
+The wire format is deliberately simple, so that other programs can talk to a bridge without isdttool: in both directions, every message is one packet, preceded by its length as two bytes, big-endian. A packet is a command or a response, starting with its opcode, e.g. `00 01 e0` asks for the version. The link-specific framing, like the USB framing in [protocol.md](protocol.md), stays between the bridge and the charger. There is no handshake, and no other message type.
 
 One exception: some chargers, like the N24, don't answer the `serial` command. For those, the bridge answers it with the charger's USB serial number, so that clients can still tell chargers apart.
 

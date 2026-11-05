@@ -1,11 +1,13 @@
 # coding=utf-8
 
-"""The bridge exposes one charger on a local USB port to the network.
+"""The bridge exposes one charger to the network.
 
-It forwards raw 64-byte HID reports between the charger and one TCP client, in both
-directions, without looking at them (see transport.py for the wire format). A new connection
-replaces the current one, so a client that went away without closing its connection never
-locks the charger.
+It forwards packets between the charger and one TCP client, in both directions, without
+looking at them (see transport.py for the wire format). A new connection replaces the current
+one, so a client that went away without closing its connection never locks the charger.
+
+The bridge reaches the charger through a transport, so the network side doesn't depend on
+how the charger is attached. Today that is USB.
 
 There is one exception to "without looking at them": some chargers, like the N24, don't
 answer the serial command. A client then has no way to tell two chargers apart. For those
@@ -20,9 +22,10 @@ from typing import Optional
 
 import isdttool
 
-from .charger.transport import REPORT_SIZE, UsbTransport
+from .charger.transport import Transport, encode_tcp_packet, take_tcp_packet
 
 SERIAL_REQUEST_OPCODE = 0xc8
+SERIAL_REQUEST = bytes([SERIAL_REQUEST_OPCODE])
 SERIAL_RESPONSE_OPCODE = 0xc9
 SERIAL_LENGTH = 12
 
@@ -36,16 +39,6 @@ def debug(*args) -> None:
     """Routine events, only logged with --debug. A client that polls connects every time."""
     if isdttool.DEBUG_MODE:
         log(*args)
-
-
-def is_serial_request(report: bytes) -> bool:
-    """
-    Checks whether a report from a client is a serial number request.
-    :param report: A 64-byte report, as written by Charger.write_to_charger.
-    """
-    # 0x01 request, frame length, 0xAA sync, 0x12 computer to charger, payload length 1, opcode
-    return len(report) >= 6 and report[0] == 0x01 and report[2] == 0xaa and \
-        report[3] == 0x12 and report[4] == 0x01 and report[5] == SERIAL_REQUEST_OPCODE
 
 
 def serial_to_bytes(usb_serial: str) -> bytes:
@@ -66,27 +59,16 @@ def serial_to_bytes(usb_serial: str) -> bytes:
 
 def serial_response(usb_serial: str) -> bytes:
     """
-    Builds the report a charger would send in reply to a serial number request.
+    Builds the packet a charger would send in reply to a serial number request.
     :param usb_serial: The USB serial number of the charger.
     """
-    packet = bytearray([0x21, 1 + SERIAL_LENGTH, SERIAL_RESPONSE_OPCODE])
-    packet.extend(serial_to_bytes(usb_serial))
-    packet.append(sum(packet) & 0xff)
-
-    escaped = bytearray([0xaa])
-    for b in packet:
-        if b == 0xaa:
-            escaped.append(0xaa)
-        escaped.append(b)
-
-    report = bytes([0x02, len(escaped)]) + bytes(escaped)
-    return report.ljust(REPORT_SIZE, b'\x00')
+    return bytes([SERIAL_RESPONSE_OPCODE]) + serial_to_bytes(usb_serial)
 
 
 class Bridge:
-    """Forwards reports between one USB charger and the current TCP client."""
+    """Forwards packets between one charger and the current TCP client."""
 
-    def __init__(self, transport: UsbTransport, usb_serial: Optional[str]) -> None:
+    def __init__(self, transport: Transport, usb_serial: Optional[str]) -> None:
         self.__transport__ = transport
         self.__usb_serial__ = usb_serial
         self.__client__: Optional[socket.socket] = None
@@ -106,15 +88,13 @@ class Bridge:
         Asks the charger for its serial number. If it doesn't answer, the bridge will answer
         serial number requests with the USB serial number. Must run before serving.
         """
-        request = bytes([0x01, 0x05, 0xaa, 0x12, 0x01, SERIAL_REQUEST_OPCODE,
-                         (0x12 + 0x01 + SERIAL_REQUEST_OPCODE) & 0xff])
-        self.__transport__.write(request.ljust(REPORT_SIZE, b'\x00'))
+        self.__transport__.send(SERIAL_REQUEST)
         answered = False
         while True:
-            report = self.__transport__.read(REPORT_SIZE, 500)
-            if not report:
+            packet = self.__transport__.receive(500)
+            if packet is None:
                 break
-            if len(report) > 5 and report[5] == SERIAL_RESPONSE_OPCODE:
+            if packet[:1] == bytes([SERIAL_RESPONSE_OPCODE]):
                 answered = True
 
         self.answer_serial = not answered and bool(self.__usb_serial__)
@@ -126,47 +106,46 @@ class Bridge:
         else:
             log('The charger does not answer the serial command, and has no USB serial number.')
 
-    def __send_to_client__(self, report: bytes) -> None:
+    def __send_to_client__(self, packet: bytes) -> None:
         with self.__client_lock__:
             client = self.__client__
         if client is None:
-            return  # Nobody is listening. Reports from the charger are dropped.
+            return  # Nobody is listening. Packets from the charger are dropped.
         try:
-            client.sendall(report)
+            client.sendall(encode_tcp_packet(packet))
         except OSError:
             pass  # The client reader notices, and cleans up.
 
     def __charger_reader__(self) -> None:
-        """Forwards reports from the charger to the current client."""
+        """Forwards packets from the charger to the current client."""
         try:
             while not self.__stopped__.is_set():
-                report = self.__transport__.read(REPORT_SIZE, 200)
-                if report:
-                    self.__send_to_client__(report.ljust(REPORT_SIZE, b'\x00'))
+                packet = self.__transport__.receive(200)
+                if packet is not None:
+                    self.__send_to_client__(packet)
         except OSError as exception:
             log('Lost the charger:', exception)
         self.__stopped__.set()
 
     def __client_reader__(self, client: socket.socket, address) -> None:
-        """Forwards reports from one client to the charger, until it disconnects, or is
+        """Forwards packets from one client to the charger, until it disconnects, or is
         replaced."""
-        buffer = b''
+        buffer = bytearray()
         try:
             while not self.__stopped__.is_set():
-                chunk = client.recv(REPORT_SIZE - len(buffer))
+                chunk = client.recv(4096)
                 if not chunk:
                     break
-                buffer += chunk
-                if len(buffer) < REPORT_SIZE:
-                    continue
-                report, buffer = buffer, b''
-
-                if self.answer_serial and is_serial_request(report):
-                    self.__send_to_client__(serial_response(self.__usb_serial__))
-                    continue
-
-                with self.__write_lock__:
-                    self.__transport__.write(report)
+                buffer.extend(chunk)
+                while True:
+                    packet = take_tcp_packet(buffer)
+                    if packet is None:
+                        break
+                    if self.answer_serial and packet == SERIAL_REQUEST:
+                        self.__send_to_client__(serial_response(self.__usb_serial__))
+                        continue
+                    with self.__write_lock__:
+                        self.__transport__.send(packet)
         except OSError:
             pass
 

@@ -3,7 +3,7 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
-## 2.0.0 - unreleased
+## 2.0.0 - 2026-11-05
 
 ### Changed
 - **Breaking:** the bridge's TCP wire format carries packets instead of 64-byte HID reports.

@@ -24,6 +24,27 @@ Not every user is allowed to access human interface devices on every platform. I
 
     ATTRS{idVendor}=="28e9", MODE="0666"
 
+## Network bridge
+
+`isdttool serve` exposes a charger on a local USB port to the network, so that `isdttool`, or any other program, can use it from another machine. It runs in the foreground until the charger is unplugged, and is meant to run as a service. `contrib/isdttool@.service` is a systemd template for it.
+
+    # On the machine with the charger. --serial picks the charger, and does not change
+    # when it moves to another USB port.
+    $ isdttool list
+    Model "SMART Device" with serial "00000000011C" at "1-1.3:1.0"
+    $ isdttool --serial 00000000011C serve --port 24000
+
+    # Anywhere else
+    $ isdttool --host charger-pi version
+    $ isdttool -H charger-pi:24000 metrics
+    $ isdttool -H [2001:db8::1]:24000 metrics
+
+Each bridge serves one charger on one TCP port. The default port is 24000, so more chargers can use 24001, 24002, and so on. Only one client is served at a time, and a new client replaces the current one.
+
+The wire format is deliberately simple, so that other programs can talk to a bridge without isdttool: in both directions, every message is exactly one 64-byte HID report, as it would be written to, or read from the charger with hidapi. There is no handshake, and no other message type.
+
+One exception: some chargers, like the N24, don't answer the `serial` command. For those, the bridge answers it with the charger's USB serial number, so that clients can still tell chargers apart.
+
 ## Usage
 
 Most options are self-explanatory, and you should not be able to break your charger with this tool unless you voluntarily use the `raw-command` sub-command. Firmware upgrades are not supported right now, but you can have a look at firmware files, and test if a certain image is flashed to your charger.

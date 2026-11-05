@@ -324,7 +324,7 @@ class Charger:
 def get_device(model_name: str = 'auto', mode: str = 'auto',
                product_id: Optional[int] = None, vendor_id: Optional[int] = None,
                path: Optional[str] = None, host: Optional[str] = None,
-               port: Optional[int] = None) -> Charger:
+               port: Optional[int] = None, serial: Optional[str] = None) -> Charger:
     """
     Looks for a charger, and returns the first one found. This deserves a little more
     sophistication. Both C4, and A4 share the same IDs. Additionally, the A4 identifies itself
@@ -338,12 +338,20 @@ def get_device(model_name: str = 'auto', mode: str = 'auto',
     :param host: Connect over TCP to a bridge on this host, instead of opening a local USB
     device. Mutually exclusive with path, product_id, and vendor_id.
     :param port: TCP port of the bridge. Defaults to 24000. Only used with host.
+    :param serial: Open the local USB charger with this USB serial number. Mutually exclusive
+    with path.
     """
     if host is not None:
-        if path is not None or product_id is not None or vendor_id is not None:
-            raise ValueError('host is mutually exclusive with path, product_id, and vendor_id.')
+        if path is not None or product_id is not None or vendor_id is not None or \
+                serial is not None:
+            raise ValueError('host is mutually exclusive with path, product_id, vendor_id, '
+                             'and serial.')
         transport: Transport = TcpTransport(host, DEFAULT_TCP_PORT if port is None else port)
     else:
+        if serial is not None:
+            if path is not None:
+                raise ValueError('serial is mutually exclusive with path.')
+            path = find_path_by_serial(serial, vendor_id, product_id)
         transport = UsbTransport(path=path, vendor_id=vendor_id, product_id=product_id)
 
     return Charger(model=model_name, mode=mode, device=transport)
@@ -358,3 +366,19 @@ def enumerate_devices(vendor_id: int = 0x28e9, product_id: int = 0x028a):
     import hid
 
     return hid.enumerate(vendor_id, product_id)
+
+
+def find_path_by_serial(serial: str, vendor_id: Optional[int] = None,
+                        product_id: Optional[int] = None) -> str:
+    """
+    Finds the hid path of the local charger with the given USB serial number.
+    :param serial: The USB serial number, as shown by `isdttool list`.
+    :param vendor_id: Only consider devices with this vendor id. Defaults to ISDT's.
+    :param product_id: Only consider devices with this product id. Defaults to ISDT's.
+    :raises OSError: if no such charger is connected.
+    """
+    for device in enumerate_devices(0x28e9 if vendor_id is None else vendor_id,
+                                    0x028a if product_id is None else product_id):
+        if device.get('serial_number') == serial:
+            return device['path'].decode('utf8')
+    raise OSError('No charger with the USB serial number {} found.'.format(serial))

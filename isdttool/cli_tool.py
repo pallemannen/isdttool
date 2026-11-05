@@ -6,7 +6,7 @@ import argparse
 import sys
 from argparse import ArgumentParser
 
-from typing import BinaryIO, Union, Dict, Callable
+from typing import BinaryIO, Union, Dict, Callable, Optional, Tuple
 
 import isdttool
 from isdttool import get_device
@@ -16,7 +16,8 @@ from isdttool.charger import display_metrics, display_version, display_link_test
     read_serial_number, \
     monitor_state
 from isdttool.charger.actions import display_channel_sensors, display_channel_voltages
-from isdttool.charger.charger import enumerate_devices
+from isdttool.charger.charger import enumerate_devices, find_path_by_serial
+from isdttool.charger.transport import DEFAULT_TCP_PORT, UsbTransport
 from isdttool.firmware import decrypt_firmware_image, print_firmware_info
 from isdttool.charger.representation import parse_packet, packet_to_str
 
@@ -114,6 +115,51 @@ def handle_monitor_state_event_factory(command: str, only_interesting: bool) \
     return handle_monitor_state_event
 
 
+def split_host_port(value: str) -> Tuple[str, Optional[int]]:
+    """
+    Splits HOST[:PORT]. IPv6 addresses with a port are written as [address]:port. An IPv6
+    address without brackets has no port.
+    :raises ValueError: if the port is not a number.
+    """
+    if value.startswith('['):
+        end = value.find(']')
+        if end < 0:
+            raise ValueError('Missing ] in {}'.format(value))
+        host, rest = value[1:end], value[end + 1:]
+        if rest == '':
+            return host, None
+        if not rest.startswith(':'):
+            raise ValueError('Expected :port after ] in {}'.format(value))
+        return host, int(rest[1:])
+    if value.count(':') == 1:
+        host, port = value.split(':')
+        return host, int(port)
+    return value, None
+
+
+def open_usb_for_bridge(a) -> Tuple[UsbTransport, Optional[str]]:
+    """
+    Opens the local charger chosen by --serial, --path, or --vid and --pid for the bridge.
+    :return: The transport, and the USB serial number of the charger, if it has one.
+    """
+    if a.serial is not None:
+        path = find_path_by_serial(a.serial, a.vid, a.pid)
+    elif a.path != '':
+        path = a.path
+    else:
+        devices = enumerate_devices(a.vid, a.pid)
+        if not devices:
+            raise OSError('No charger found.')
+        path = devices[0]['path'].decode('utf8')
+
+    usb_serial = None
+    for d in enumerate_devices(a.vid, a.pid):
+        if d['path'].decode('utf8') == path:
+            usb_serial = d.get('serial_number') or None
+
+    return UsbTransport(path=path), usb_serial
+
+
 def get_argument_parser() -> ArgumentParser:
     """Constructs an appropriate ArgumentParser."""
 
@@ -139,6 +185,21 @@ def get_argument_parser() -> ArgumentParser:
     parser.add_argument('--path', default='', type=str,
                         help='The platform specific hid path, only needed to distinguish '
                              'multiple chargers. Overrides --vid, and --pid')
+
+    parser.add_argument('--serial', '-s', default=None, type=str,
+                        help='The USB serial number of the charger, as shown by the list '
+                             'command. Distinguishes multiple chargers, like --path, but does not '
+                             'change when the charger moves to another USB port. Overrides '
+                             '--vid, and --pid.')
+
+    parser.add_argument('--host', '-H', default=None, type=str, metavar='HOST[:PORT]',
+                        help='Talk to a charger that a bridge (see the serve command) exposes on '
+                             'the network, instead of a charger on a local USB port. Write IPv6 '
+                             'addresses with a port as [address]:port.')
+
+    parser.add_argument('--port', '-p', default=None, type=int,
+                        help='The TCP port of the bridge. Defaults to {}. Must match the port '
+                             'in --host, if both are given.'.format(DEFAULT_TCP_PORT))
 
     parser.add_argument('--output', '-o', default='text', type=str,
                         choices=['text', 'json', 'csv', 'dict', 'raw'],
@@ -266,6 +327,19 @@ def get_argument_parser() -> ArgumentParser:
                                      'available. Useful for messaging.')
     monitor_parser.set_defaults(mode='monitor')
 
+    serve_parser = subparsers.add_parser('serve',
+                                         help='Expose the charger on a local USB port to the '
+                                              'network, for clients using --host. Serves one '
+                                              'charger, chosen like for any other command. A new '
+                                              'client replaces the current one. Runs until the '
+                                              'charger is unplugged.')
+    serve_parser.add_argument('--port', '-p', dest='serve_port', default=None, type=int,
+                              help='The TCP port to listen on. Defaults to {}. Use one port per '
+                                   'charger.'.format(DEFAULT_TCP_PORT))
+    serve_parser.add_argument('--bind', '-b', default='', type=str,
+                              help='The address to listen on. Defaults to all addresses.')
+    serve_parser.set_defaults(mode='serve')
+
     decode_parser = subparsers.add_parser('decode',
                                           help='Provide packets on the command line, and decode '
                                                'them as if they were sent by the charger.')
@@ -309,6 +383,23 @@ def main() -> None:
     #                       ''.split())
     isdttool.DEBUG_MODE = a.debug
 
+    host: Optional[str] = None
+    port: Optional[int] = a.port
+    if a.host is not None:
+        try:
+            host, host_port = split_host_port(a.host)
+        except ValueError as exception:
+            parser.error(str(exception))
+        if host_port is not None:
+            if port is not None and port != host_port:
+                parser.error('The port in --host ({}) differs from --port ({}).'
+                             .format(host_port, port))
+            port = host_port
+        if a.path != '' or a.serial is not None:
+            parser.error('--host cannot be combined with --path, or --serial.')
+    if a.serial is not None and a.path != '':
+        parser.error('--serial cannot be combined with --path.')
+
     if a.mode == '':
         parser.print_usage()
         exit(1)
@@ -318,13 +409,38 @@ def main() -> None:
             print('No devices found.')
         else:
             for d in devices:
-                print(f'Model "{d["product_string"]}" at "{d["path"].decode("utf8")}"')
+                print(f'Model "{d["product_string"]}" with serial "{d["serial_number"]}" '
+                      f'at "{d["path"].decode("utf8")}"')
             print(f'Found {len(devices)} candidate devices. Note that the model identifier does '
                   f'NOT have to be correct here.')
     elif a.mode == 'decrypt-fw':
         firmware_decrypt(a.file, a.outfile)
     elif a.mode == 'fw-info':
         print_firmware_info(a.file)
+    elif a.mode == 'serve':
+        if host is not None:
+            parser.error('serve exposes a local charger. It cannot be combined with --host.')
+        if a.serve_port is not None and port is not None and a.serve_port != port:
+            parser.error('The port of serve ({}) differs from --port ({}).'
+                         .format(a.serve_port, port))
+        serve_port = a.serve_port if a.serve_port is not None else port
+        from isdttool.bridge import Bridge
+        try:
+            transport, usb_serial = open_usb_for_bridge(a)
+        except OSError as exception:
+            print('Could not open charger:', str(exception), file=sys.stderr)
+            exit(255)
+        bridge = Bridge(transport, usb_serial)
+        try:
+            bridge.probe_serial()
+            bridge.serve(a.bind, DEFAULT_TCP_PORT if serve_port is None else serve_port)
+        except KeyboardInterrupt:
+            pass
+        except OSError as exception:
+            print('Bridge stopped:', str(exception), file=sys.stderr)
+            exit(1)
+        # The charger was unplugged. Exit with an error, so that a service manager restarts.
+        exit(1)
     elif a.mode == 'decode':
         if a.model == 'auto':
             print('Hint: Model auto-detection does not work in decode mode. Setting model to '
@@ -334,7 +450,13 @@ def main() -> None:
     else:
         charger = None
         try:
-            if a.path == '':
+            if host is not None:
+                charger = get_device(host=host, port=port,
+                                     model_name=a.model, mode=a.running_in)
+            elif a.serial is not None:
+                charger = get_device(serial=a.serial, product_id=a.pid, vendor_id=a.vid,
+                                     model_name=a.model, mode=a.running_in)
+            elif a.path == '':
                 charger = get_device(product_id=a.pid, vendor_id=a.vid,
                                      model_name=a.model, mode=a.running_in)
             else:

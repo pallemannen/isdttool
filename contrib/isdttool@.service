@@ -1,0 +1,30 @@
+# Exposes one ISDT charger to the network with `isdttool serve`.
+#
+# The instance name is the USB serial number of the charger, as shown by `isdttool list`:
+#
+#   systemctl enable --now isdttool@00000000011C
+#
+# The bridge listens on port 24000. For a second charger, give it another port with
+#   systemctl edit isdttool@<serial>
+# and
+#   [Service]
+#   Environment=PORT=24001
+#
+# The user needs read and write access to the charger's hidraw device, for example through
+# the plugdev group and a udev rule like
+#   SUBSYSTEM=="hidraw", ATTRS{idVendor}=="28e9", MODE="0660", GROUP="plugdev"
+
+[Unit]
+Description=isdttool bridge for the ISDT charger %I
+After=network.target
+
+[Service]
+Environment=PORT=24000
+ExecStart=/usr/bin/env isdttool --serial %I serve --port ${PORT}
+DynamicUser=yes
+SupplementaryGroups=plugdev
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

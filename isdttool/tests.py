@@ -2,6 +2,7 @@
 
 """Well, these are unit tests."""
 
+import queue
 import socket
 import threading
 import unittest
@@ -13,6 +14,7 @@ from .charger.charger import Charger, __generate_raw_frames__, __escape_synchron
     __unescape_synchronization__
 from .charger.representation import parse_packet
 from .charger.transport import TcpTransport, REPORT_SIZE
+from .bridge import Bridge, is_serial_request, serial_response, serial_to_bytes
 
 
 class MyTestCase(unittest.TestCase):
@@ -289,6 +291,88 @@ class TcpTransportTestCase(unittest.TestCase):
     def test_host_excludes_usb_options(self) -> None:
         with self.assertRaises(ValueError):
             get_device(host='127.0.0.1', path='/dev/hidraw0')
+
+
+class FakeUsbCharger:
+    """Stands in for a UsbTransport. Answers version requests, and ignores everything else,
+    like an N24 ignores the serial command."""
+
+    def __init__(self) -> None:
+        self.replies: 'queue.Queue[bytes]' = queue.Queue()
+        self.written: List[bytes] = []
+        self.closed = False
+
+    def read(self, max_length: int = REPORT_SIZE, timeout_ms: int = 0) -> bytes:
+        try:
+            return self.replies.get(timeout=timeout_ms / 1000 if timeout_ms > 0 else None)
+        except queue.Empty:
+            return b''
+
+    def write(self, data: bytes) -> int:
+        self.written.append(bytes(data))
+        if data[5] == 0xe0:  # version
+            self.replies.put(A4_VERSION_REPORT)
+        return len(data)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class BridgeTestCase(unittest.TestCase):
+    def start(self, usb_serial='00000000011C'):
+        usb = FakeUsbCharger()
+        bridge = Bridge(usb, usb_serial)
+        bridge.probe_serial()
+        thread = threading.Thread(target=bridge.serve, args=('127.0.0.1', 0), daemon=True)
+        thread.start()
+        bridge.ready.wait(2)
+        self.addCleanup(thread.join, 3)
+        self.addCleanup(bridge.stop)
+        return bridge, usb
+
+    def test_serial_to_bytes(self) -> None:
+        self.assertEqual(serial_to_bytes('00000000011C').hex(), '00000000000000000000011c')
+        self.assertEqual(serial_to_bytes('ABC-1'), b'ABC-1' + b'\x00' * 7)
+
+    def test_serial_response_parses(self) -> None:
+        charger = Charger(None, model='ignore', mode='ignore')
+        packet = charger.read_packet([bytearray(serial_response('00000000011C'))])
+        result = parse_packet(packet, 'ignore')
+        self.assertFalse(result['_malformed'])
+        self.assertEqual(result['serial number'], '00000000000000000000011c')
+
+    def test_is_serial_request(self) -> None:
+        self.assertTrue(is_serial_request(bytes(__generate_raw_frames__(bytearray([0xc8]))[0])))
+        self.assertFalse(is_serial_request(bytes(__generate_raw_frames__(bytearray([0xe0]))[0])))
+
+    def test_forwards_reports(self) -> None:
+        bridge, usb = self.start()
+        charger = get_device(model_name='A4', mode='ignore', host='127.0.0.1', port=bridge.port)
+        charger.version()
+        self.assertEqual(parse_packet(charger.read_packet(), 'ignore')['model name'], 'A4')
+        charger.close()
+
+    def test_answers_serial_for_charger_that_does_not(self) -> None:
+        bridge, usb = self.start()
+        self.assertTrue(bridge.answer_serial)
+        charger = get_device(model_name='A4', mode='ignore', host='127.0.0.1', port=bridge.port)
+        written = len(usb.written)
+        charger.get_mcu_serial_number()
+        result = parse_packet(charger.read_packet(), 'ignore')
+        self.assertEqual(result['serial number'], '00000000000000000000011c')
+        self.assertEqual(len(usb.written), written)  # Not forwarded to the charger
+        charger.close()
+
+    def test_new_client_replaces_old(self) -> None:
+        bridge, usb = self.start()
+        first = TcpTransport('127.0.0.1', bridge.port)
+        second = get_device(model_name='A4', mode='ignore', host='127.0.0.1', port=bridge.port)
+        with self.assertRaises(ConnectionError):
+            first.read(REPORT_SIZE, 2000)
+        second.version()
+        self.assertEqual(parse_packet(second.read_packet(), 'ignore')['model name'], 'A4')
+        first.close()
+        second.close()
 
 
 if __name__ == '__main__':

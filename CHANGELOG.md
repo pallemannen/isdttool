@@ -3,6 +3,13 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
+## 1.1.2 - 2026-11-04
+
+### Fixed
+- Over TCP, replies that took longer than 200 ms were missed, and then taken as the reply
+  to the next request. A busy N24 sometimes takes up to about 260 ms. The read timeout is
+  now 1000 ms over TCP, and configurable (`read_timeout_ms` in `get_device()`).
+
 ## 1.1.1 - 2026-11-04
 
 ### Changed

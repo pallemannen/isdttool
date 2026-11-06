@@ -50,6 +50,8 @@ The wire format is deliberately simple, so that other programs can talk to a bri
 
 One exception: some chargers, like the N24, don't answer the `serial` command. For those, the bridge answers it with the charger's USB serial number, so that clients can still tell chargers apart.
 
+The bridge also advertises itself on the local network over mDNS, as the service type `_isdt._tcp.local.`, with the charger's serial number and model in its TXT records, so a client can find it without being told its address. This is on by default; `serve --no-advertise` turns it off, and `--instance-name` sets the advertised name. See [docs/zeroconf.md](docs/zeroconf.md).
+
 ## Usage
 
 Most options are self-explanatory, and you should not be able to break your charger with this tool unless you voluntarily use the `raw-command` sub-command. Firmware upgrades are not supported right now, but you can have a look at firmware files, and test if a certain image is flashed to your charger.

@@ -338,6 +338,14 @@ def get_argument_parser() -> ArgumentParser:
                                    'charger.'.format(DEFAULT_TCP_PORT))
     serve_parser.add_argument('--bind', '-b', default='', type=str,
                               help='The address to listen on. Defaults to all addresses.')
+    serve_parser.add_argument('--no-advertise', dest='advertise', default=True,
+                              action='store_false',
+                              help='Do not advertise the charger on the network over mDNS. By '
+                                   'default, the bridge advertises itself, so clients can find '
+                                   'it without being told its address.')
+    serve_parser.add_argument('--instance-name', default=None, type=str,
+                              help='The mDNS instance name to advertise. Defaults to the model '
+                                   'and serial number of the charger.')
     serve_parser.set_defaults(mode='serve')
 
     decode_parser = subparsers.add_parser('decode',
@@ -431,8 +439,11 @@ def main() -> None:
             print('Could not open charger:', str(exception), file=sys.stderr)
             exit(255)
         bridge = Bridge(transport, usb_serial)
+        bridge.advertise_enabled = a.advertise
+        bridge.instance_name = a.instance_name
         try:
             bridge.probe_serial()
+            bridge.probe_model()
             bridge.serve(a.bind, DEFAULT_TCP_PORT if serve_port is None else serve_port)
         except KeyboardInterrupt:
             pass

@@ -388,6 +388,7 @@ class BridgeTestCase(unittest.TestCase):
     def start(self, usb_serial='00000000011C'):
         charger = FakeCharger()
         bridge = Bridge(charger, usb_serial)
+        bridge.advertise_enabled = False  # Don't touch the network from a unit test.
         bridge.probe_serial()
         thread = threading.Thread(target=bridge.serve, args=('127.0.0.1', 0), daemon=True)
         thread.start()
@@ -434,6 +435,78 @@ class BridgeTestCase(unittest.TestCase):
         self.assertEqual(parse_packet(second.read_packet(), 'ignore')['model name'], 'A4')
         first.close()
         second.close()
+
+    def test_probe_records_substituted_serial(self) -> None:
+        bridge = Bridge(FakeCharger(), '00000000011C')
+        bridge.probe_serial()
+        # The N24-like FakeCharger doesn't answer, so the bridge advertises the USB serial,
+        # in the same form a client reads it back.
+        self.assertTrue(bridge.answer_serial)
+        self.assertEqual(bridge.effective_serial, '00000000000000000000011c')
+
+    def test_probe_records_model(self) -> None:
+        bridge = Bridge(FakeCharger(), '00000000011C')
+        bridge.probe_model()
+        self.assertEqual(bridge.model, 'A4')
+
+    def test_advertise_disabled_does_nothing(self) -> None:
+        bridge = Bridge(FakeCharger(), '00000000011C')
+        bridge.advertise_enabled = False
+        bridge.zeroconf_factory = lambda: self.fail('must not build a registrar when disabled')
+        bridge.advertise()  # Must not raise, and must not call the factory.
+
+    def test_advertises_over_mdns(self) -> None:
+        try:
+            import zeroconf  # noqa: F401
+        except ImportError:
+            self.skipTest('zeroconf is not installed')
+
+        fake = FakeZeroconf()
+        charger = FakeCharger()
+        bridge = Bridge(charger, '00000000011C')
+        bridge.zeroconf_factory = lambda: fake
+        bridge.probe_serial()
+        bridge.probe_model()
+        thread = threading.Thread(target=bridge.serve, args=('127.0.0.1', 0), daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 3)
+        self.addCleanup(bridge.stop)
+
+        deadline = time.time() + 2
+        while not fake.registered and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(fake.registered), 1)
+        info = fake.registered[0]
+        self.assertEqual(info.type, '_isdt._tcp.local.')
+        self.assertTrue(info.name.startswith('ISDT A4 00000000000000000000011c.'))
+        properties = {key.decode(): None if value is None else value.decode()
+                      for key, value in info.properties.items()}
+        self.assertEqual(properties['serial'], '00000000000000000000011c')
+        self.assertEqual(properties['model'], 'A4')
+
+        bridge.stop()
+        thread.join(3)
+        self.assertEqual(fake.unregistered, fake.registered)
+        self.assertTrue(fake.closed)
+
+
+class FakeZeroconf:
+    """Stands in for zeroconf.Zeroconf, recording what the bridge registers."""
+
+    def __init__(self) -> None:
+        self.registered: List[object] = []
+        self.unregistered: List[object] = []
+        self.closed = False
+
+    def register_service(self, info) -> None:
+        self.registered.append(info)
+
+    def unregister_service(self, info) -> None:
+        self.unregistered.append(info)
+
+    def close(self) -> None:
+        self.closed = True
+
 
 def n24_frame(hex_string: str) -> List[bytearray]:
     """A 64-byte report as captured from an N24."""

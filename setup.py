@@ -3,18 +3,23 @@
 
 """Standard setup.py. Speaks for itself."""
 
+import re
+
 from setuptools import setup, find_packages
 
 with open('README.md', 'r') as fh:
     long_description = fh.read()
 
+with open('isdttool/__init__.py', 'r') as fh:
+    version = re.search(r"^__version__ = '([^']+)'", fh.read(), re.MULTILINE).group(1)
+
 setup(
     name='isdttool-pal',
-    version='2.0.0',
+    version=version,
     packages=find_packages(),
     url='https://github.com/pallemannen/isdttool',
     license='GPLv3',
-    install_requires='hidapi>=0.10.1',
+    install_requires=['hidapi>=0.10.1', 'zeroconf>=0.38'],
     author='Max Ried',
     author_email='maxried@posteo.de',
     maintainer='Patrik Bodin',

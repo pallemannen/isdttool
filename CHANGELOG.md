@@ -3,6 +3,15 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
+## 2.1.0 - 2026-11-05
+
+### Added
+- The bridge advertises itself on the local network over mDNS/zeroconf, under the service type
+  `_isdt._tcp.local.`, with the charger's serial number and model in its TXT records. A client,
+  such as the Home Assistant integration, can find a charger without being told its address.
+  Advertising is on by default; `serve --no-advertise` turns it off, and `--instance-name`
+  overrides the advertised name. See [docs/zeroconf.md](docs/zeroconf.md).
+
 ## 2.0.0 - 2026-11-05
 
 ### Changed

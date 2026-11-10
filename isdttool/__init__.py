@@ -8,7 +8,7 @@ I didn't understand. You're welcome to help. A C4evo charger is already ordered.
 
 from .charger.charger import get_device, Charger
 
-__version__ = '2.1.0'
+__version__ = '2.1.1'
 
 DEBUG_MODE = False
 

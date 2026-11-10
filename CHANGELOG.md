@@ -3,6 +3,11 @@
 All notable changes to this fork. Upstream releases are listed at
 https://github.com/maxried/isdttool.
 
+## 2.1.1 - 2026-11-10
+
+### Fixed
+- N24: battery type 8 is NiCd (the charger's battery type set to NiCd); it was shown as unknown.
+
 ## 2.1.0 - 2026-11-05
 
 ### Added
